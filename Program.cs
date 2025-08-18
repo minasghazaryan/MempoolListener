@@ -14,6 +14,7 @@ namespace MempoolListener
         private static readonly string EthereumWebSocketUrl = "wss://mainnet.infura.io/ws/v3/YOUR-PROJECT-ID"; // You'll need to replace with your Infura project ID
         private static readonly string AlchemyWebSocketUrl = "wss://eth-mainnet.g.alchemy.com/v2/YOUR-API-KEY"; // Alternative: Alchemy
         private static readonly decimal WhaleThreshold = 100.0m; // ETH threshold for whale detection
+        private static readonly decimal DollarWhaleThreshold = 10000m; // $10K USD threshold for Telegram alerts
         private static readonly Dictionary<string, decimal> TokenWhaleThresholds = new()
         {
             { "USDT", 1000000m }, // $1M USDT
@@ -24,17 +25,36 @@ namespace MempoolListener
             { "LINK", 50000m }    // 50k LINK
         };
 
+        // Telegram Configuration
+        private static readonly string TelegramBotToken = "8352491052:AAHE-cUih9KCPoe3aeBIs7vXWS6aZ-IXLRg";
+        private static readonly string TelegramChatId = "770515104";
+        private static readonly decimal EthPriceUsd = 3000m; // Current ETH price (you can update this or fetch from API)
+
         static async Task Main(string[] args)
         {
             Console.WriteLine("🐋 Ethereum Mempool Whale Listener Starting...");
             Console.WriteLine($"Monitoring for transactions > {WhaleThreshold} ETH");
+            Console.WriteLine($"📱 Telegram alerts for transactions > ${DollarWhaleThreshold:N0}");
             Console.WriteLine("Press Ctrl+C to exit\n");
 
-            // Note: You'll need to set up your own Infura or Alchemy API key
-            Console.WriteLine("⚠️  IMPORTANT: You need to set up your own API key!");
-            Console.WriteLine("1. Go to https://infura.io/ or https://www.alchemy.com/");
-            Console.WriteLine("2. Create a free account and get your API key");
-            Console.WriteLine("3. Replace 'YOUR-PROJECT-ID' in the code with your actual key\n");
+            Console.WriteLine("🔑 Using Alchemy API key for real Ethereum data");
+            Console.WriteLine("📡 Connecting to Ethereum mainnet...\n");
+
+            // Check Telegram configuration
+            if (TelegramBotToken == "YOUR_BOT_TOKEN" || TelegramChatId == "YOUR_CHAT_ID")
+            {
+                Console.WriteLine("⚠️  TELEGRAM NOT CONFIGURED!");
+                Console.WriteLine("To enable Telegram alerts:");
+                Console.WriteLine("1. Create a bot with @BotFather on Telegram");
+                Console.WriteLine("2. Get your bot token");
+                Console.WriteLine("3. Get your chat ID");
+                Console.WriteLine("4. Update the TelegramBotToken and TelegramChatId variables\n");
+            }
+            else
+            {
+                Console.WriteLine("✅ Telegram integration configured");
+                await SendTelegramMessage("🐋 Ethereum Whale Listener Started!\nMonitoring for transactions > $10,000 USD");
+            }
 
             await ConnectToEthereum();
         }
@@ -45,9 +65,8 @@ namespace MempoolListener
             
             try
             {
-                // For now, we'll use a public Ethereum WebSocket endpoint
-                // In production, you should use your own Infura/Alchemy API key
-                var wsUrl = "wss://eth-mainnet.g.alchemy.com/v2/demo"; // Demo endpoint
+                // Using your Alchemy API key for real Ethereum data
+                var wsUrl = "wss://eth-mainnet.g.alchemy.com/v2/IFLF7XZPqeolSBaCnaHqh";
                 
                 await client.ConnectAsync(new Uri(wsUrl), CancellationToken.None);
                 Console.WriteLine("✅ Connected to Ethereum WebSocket");
@@ -138,56 +157,86 @@ namespace MempoolListener
         {
             try
             {
-                // For demo purposes, we'll simulate transaction analysis
-                // In a real implementation, you'd fetch transaction details from the blockchain
-                
-                // Simulate random transaction values for demonstration
-                var random = new Random();
-                var ethValue = random.Next(1, 1000) / 10.0m; // Random ETH value 0.1 to 100
-                var gasPrice = random.Next(20, 200); // Gwei
-                var gasUsed = random.Next(21000, 500000); // Gas used
-                var fee = (gasPrice * gasUsed) / 1000000000.0m; // Convert to ETH
-
-                // Check if this is a whale transaction
-                if (ethValue >= WhaleThreshold)
+                // Fetch real transaction data from Alchemy API
+                using var httpClient = new HttpClient();
+                var requestBody = JsonConvert.SerializeObject(new
                 {
-                    ReportWhaleTransaction(txHash, ethValue, fee, gasPrice, gasUsed);
-                }
+                    jsonrpc = "2.0",
+                    id = 1,
+                    method = "eth_getTransactionByHash",
+                    @params = new[] { txHash }
+                });
 
-                // Check for high fee transactions (potential whale activity)
-                if (fee >= 0.1m) // 0.1 ETH fee threshold
-                {
-                    ReportHighFeeTransaction(txHash, ethValue, fee, gasPrice, gasUsed);
-                }
+                var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync("https://eth-mainnet.g.alchemy.com/v2/IFLF7XZPqeolSBaCnaHqh", content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var txData = JsonConvert.DeserializeObject<dynamic>(responseContent);
 
-                // Check for token transfers (simplified)
-                if (ethValue < 0.01m && gasUsed > 65000) // Likely token transfer
+                if (txData?.result != null)
                 {
-                    ReportTokenTransfer(txHash, ethValue, fee, gasUsed);
+                    var result = txData.result;
+                    var value = result.value?.ToString() ?? "0";
+                    var gasPrice = result.gasPrice?.ToString() ?? "0";
+                    var gas = result.gas?.ToString() ?? "21000";
+                    var to = result.to?.ToString() ?? "";
+                    var from = result.from?.ToString() ?? "";
+
+                    // Convert hex values to decimal
+                    var ethValue = Convert.ToInt64(value, 16) / 1000000000000000000.0m; // Convert from Wei to ETH
+                    var gasPriceGwei = Convert.ToInt64(gasPrice, 16) / 1000000000.0m; // Convert from Wei to Gwei
+                    var gasUsed = Convert.ToInt32(gas, 16);
+                    var fee = (gasPriceGwei * gasUsed) / 1000000000.0m; // Convert to ETH
+
+                    // Calculate USD value
+                    var usdValue = ethValue * EthPriceUsd;
+
+                    // Check if this is a whale transaction
+                    if (ethValue >= WhaleThreshold)
+                    {
+                        ReportWhaleTransaction(txHash, ethValue, fee, (int)gasPriceGwei, gasUsed, usdValue);
+                    }
+
+                    // Check for high fee transactions (potential whale activity)
+                    if (fee >= 0.1m) // 0.1 ETH fee threshold
+                    {
+                        ReportHighFeeTransaction(txHash, ethValue, fee, (int)gasPriceGwei, gasUsed);
+                    }
+
+                    // Check for token transfers (simplified)
+                    if (ethValue < 0.01m && gasUsed > 65000) // Likely token transfer
+                    {
+                        ReportTokenTransfer(txHash, ethValue, fee, gasUsed);
+                    }
+
+                    // Check for Telegram whale alerts (>$15K)
+                    if (usdValue >= DollarWhaleThreshold)
+                    {
+                        await SendTelegramWhaleAlert(txHash, ethValue, fee, (int)gasPriceGwei, gasUsed, usdValue, from, to);
+                    }
+
+                    // Log all transactions for monitoring
+                    Console.WriteLine($"📊 TX: {txHash.Substring(0, 10)}... | Value: {ethValue:F6} ETH (${usdValue:F2}) | Fee: {fee:F6} ETH | Gas: {gasUsed:N0}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error analyzing transaction: {ex.Message}");
+                Console.WriteLine($"❌ Error analyzing transaction {txHash}: {ex.Message}");
             }
         }
 
-        static Task ReportWhaleTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed)
+        static Task ReportWhaleTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed, decimal usdValue)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var ethPrice = 3000m; // Approximate ETH price for demo
             
             Console.WriteLine($"🐋 ETH WHALE DETECTED! 🐋");
             Console.WriteLine($"⏰ Time: {timestamp}");
             Console.WriteLine($"🆔 TX Hash: {txHash}");
-            Console.WriteLine($"💰 Value: {ethValue:F4} ETH (${ethValue * ethPrice:F2})");
+            Console.WriteLine($"💰 Value: {ethValue:F4} ETH (${usdValue:F2})");
             Console.WriteLine($"💸 Fee: {fee:F6} ETH");
             Console.WriteLine($"⛽ Gas Price: {gasPrice} Gwei");
             Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
             Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
             Console.WriteLine(new string('=', 80));
-            
-            SendNotification($"🐋 ETH Whale Transaction Detected: {ethValue:F4} ETH", txHash);
             
             return Task.CompletedTask;
         }
@@ -225,34 +274,62 @@ namespace MempoolListener
             return Task.CompletedTask;
         }
 
-        static Task SendNotification(string message, string txHash)
+        static async Task SendTelegramMessage(string message)
         {
-            Console.WriteLine($"📢 NOTIFICATION: {message}");
-            
-            // Example webhook implementation for ETH:
-            /*
-            using var httpClient = new HttpClient();
-            var webhookData = new
+            if (TelegramBotToken == "YOUR_BOT_TOKEN" || TelegramChatId == "YOUR_CHAT_ID")
             {
-                content = message,
-                embeds = new[]
+                return; // Telegram not configured
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient();
+                var telegramUrl = $"https://api.telegram.org/bot{TelegramBotToken}/sendMessage";
+                
+                var telegramData = new
                 {
-                    new
-                    {
-                        title = "ETH Whale Transaction Detected",
-                        description = $"Transaction: {txHash}",
-                        color = 0x00ff00,
-                        url = $"https://etherscan.io/tx/{txHash}"
-                    }
+                    chat_id = TelegramChatId,
+                    text = message,
+                    parse_mode = "HTML"
+                };
+
+                var json = JsonConvert.SerializeObject(telegramData);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync(telegramUrl, content);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"📱 Telegram message sent successfully");
                 }
-            };
-            
-            var json = JsonConvert.SerializeObject(webhookData);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            await httpClient.PostAsync("YOUR_WEBHOOK_URL", content);
-            */
-            
-            return Task.CompletedTask;
+                else
+                {
+                    Console.WriteLine($"❌ Failed to send Telegram message: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error sending Telegram message: {ex.Message}");
+            }
+        }
+
+        static async Task SendTelegramWhaleAlert(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed, decimal usdValue, string from, string to)
+        {
+            var timestamp = DateTime.Now.ToString("HH:mm:ss");
+            var shortHash = txHash.Substring(0, 10) + "...";
+            var shortFrom = from.Length > 10 ? from.Substring(0, 10) + "..." : from;
+            var shortTo = to.Length > 10 ? to.Substring(0, 10) + "..." : to;
+
+            var message = $"🐋 <b>WHALE ALERT!</b> 🐋\n\n" +
+                         $"💰 <b>Value:</b> {ethValue:F4} ETH (${usdValue:N0})\n" +
+                         $"⏰ <b>Time:</b> {timestamp}\n" +
+                         $"🆔 <b>TX:</b> {shortHash}\n" +
+                         $"💸 <b>Fee:</b> {fee:F6} ETH\n" +
+                         $"⛽ <b>Gas:</b> {gasPrice} Gwei ({gasUsed:N0})\n" +
+                         $"📤 <b>From:</b> {shortFrom}\n" +
+                         $"📥 <b>To:</b> {shortTo}\n\n" +
+                         $"🔗 <a href=\"https://etherscan.io/tx/{txHash}\">View on Etherscan</a>";
+
+            await SendTelegramMessage(message);
         }
     }
 }
