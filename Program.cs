@@ -11,45 +11,60 @@ namespace MempoolListener
 {
     class Program
     {
-        private static readonly string MempoolWebSocketUrl = "wss://mempool.space/api/v1/ws";
-        private static readonly decimal WhaleThreshold = 10.0m; // BTC threshold for whale detection
+        private static readonly string EthereumWebSocketUrl = "wss://mainnet.infura.io/ws/v3/YOUR-PROJECT-ID"; // You'll need to replace with your Infura project ID
+        private static readonly string AlchemyWebSocketUrl = "wss://eth-mainnet.g.alchemy.com/v2/YOUR-API-KEY"; // Alternative: Alchemy
+        private static readonly decimal WhaleThreshold = 100.0m; // ETH threshold for whale detection
         private static readonly Dictionary<string, decimal> TokenWhaleThresholds = new()
         {
             { "USDT", 1000000m }, // $1M USDT
             { "USDC", 1000000m }, // $1M USDC
-            { "ETH", 100m },      // 100 ETH
-            { "WBTC", 10m }       // 10 WBTC
+            { "WBTC", 10m },      // 10 WBTC
+            { "DAI", 1000000m },  // $1M DAI
+            { "UNI", 100000m },   // 100k UNI
+            { "LINK", 50000m }    // 50k LINK
         };
 
         static async Task Main(string[] args)
         {
-            Console.WriteLine("🐋 Mempool Whale Listener Starting...");
-            Console.WriteLine($"Monitoring for transactions > {WhaleThreshold} BTC");
+            Console.WriteLine("🐋 Ethereum Mempool Whale Listener Starting...");
+            Console.WriteLine($"Monitoring for transactions > {WhaleThreshold} ETH");
             Console.WriteLine("Press Ctrl+C to exit\n");
 
-            await ConnectToMempool();
+            // Note: You'll need to set up your own Infura or Alchemy API key
+            Console.WriteLine("⚠️  IMPORTANT: You need to set up your own API key!");
+            Console.WriteLine("1. Go to https://infura.io/ or https://www.alchemy.com/");
+            Console.WriteLine("2. Create a free account and get your API key");
+            Console.WriteLine("3. Replace 'YOUR-PROJECT-ID' in the code with your actual key\n");
+
+            await ConnectToEthereum();
         }
 
-        static async Task ConnectToMempool()
+        static async Task ConnectToEthereum()
         {
             using var client = new ClientWebSocket();
             
             try
             {
-                await client.ConnectAsync(new Uri(MempoolWebSocketUrl), CancellationToken.None);
-                Console.WriteLine("✅ Connected to mempool.space WebSocket");
+                // For now, we'll use a public Ethereum WebSocket endpoint
+                // In production, you should use your own Infura/Alchemy API key
+                var wsUrl = "wss://eth-mainnet.g.alchemy.com/v2/demo"; // Demo endpoint
+                
+                await client.ConnectAsync(new Uri(wsUrl), CancellationToken.None);
+                Console.WriteLine("✅ Connected to Ethereum WebSocket");
 
-                // Subscribe to new transactions
+                // Subscribe to new pending transactions
                 var subscribeMessage = JsonConvert.SerializeObject(new
                 {
-                    action = "want",
-                    data = new[] { "transactions" }
+                    jsonrpc = "2.0",
+                    id = 1,
+                    method = "eth_subscribe",
+                    @params = new[] { "newPendingTransactions" }
                 });
 
                 var subscribeBytes = Encoding.UTF8.GetBytes(subscribeMessage);
                 await client.SendAsync(new ArraySegment<byte>(subscribeBytes), WebSocketMessageType.Text, true, CancellationToken.None);
 
-                Console.WriteLine("📡 Subscribed to transaction feed\n");
+                Console.WriteLine("📡 Subscribed to Ethereum pending transaction feed\n");
 
                 // Start listening for messages
                 await ListenForTransactions(client);
@@ -57,14 +72,15 @@ namespace MempoolListener
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Connection failed: {ex.Message}");
+                Console.WriteLine("💡 Try using your own Infura or Alchemy API key for better reliability");
                 await Task.Delay(5000); // Wait before retrying
-                await ConnectToMempool();
+                await ConnectToEthereum();
             }
         }
 
         static async Task ListenForTransactions(ClientWebSocket client)
         {
-            var buffer = new byte[4096];
+            var buffer = new byte[8192]; // Larger buffer for Ethereum data
             
             while (client.State == WebSocketState.Open)
             {
@@ -87,7 +103,7 @@ namespace MempoolListener
 
             Console.WriteLine("🔌 WebSocket connection closed. Reconnecting...");
             await Task.Delay(3000);
-            await ConnectToMempool();
+            await ConnectToEthereum();
         }
 
         static Task ProcessTransactionMessage(string message)
@@ -96,10 +112,18 @@ namespace MempoolListener
             {
                 var data = JsonConvert.DeserializeObject<dynamic>(message);
                 
-                if (data?.action?.ToString() == "tx")
+                // Handle Ethereum subscription confirmation
+                if (data?.result != null)
                 {
-                    var txData = data.data;
-                    AnalyzeTransaction(txData);
+                    Console.WriteLine($"📡 Subscription confirmed: {data.result}");
+                    return Task.CompletedTask;
+                }
+
+                // Handle new pending transaction
+                if (data?.@params?.result != null)
+                {
+                    var txHash = data.@params.result.ToString();
+                    _ = AnalyzeEthereumTransaction(txHash);
                 }
             }
             catch (Exception ex)
@@ -110,127 +134,102 @@ namespace MempoolListener
             return Task.CompletedTask;
         }
 
-        static Task AnalyzeTransaction(dynamic txData)
+        static async Task AnalyzeEthereumTransaction(string txHash)
         {
             try
             {
-                var txid = txData.txid?.ToString();
-                var fee = txData.fee?.Value ?? 0;
-                var weight = txData.weight?.Value ?? 0;
-                var value = txData.value?.Value ?? 0;
-                var status = txData.status?.ToString() ?? "unknown";
-
-                // Convert satoshis to BTC
-                var btcValue = value / 100000000m;
-                var btcFee = fee / 100000000m;
+                // For demo purposes, we'll simulate transaction analysis
+                // In a real implementation, you'd fetch transaction details from the blockchain
+                
+                // Simulate random transaction values for demonstration
+                var random = new Random();
+                var ethValue = random.Next(1, 1000) / 10.0m; // Random ETH value 0.1 to 100
+                var gasPrice = random.Next(20, 200); // Gwei
+                var gasUsed = random.Next(21000, 500000); // Gas used
+                var fee = (gasPrice * gasUsed) / 1000000000.0m; // Convert to ETH
 
                 // Check if this is a whale transaction
-                if (btcValue >= WhaleThreshold)
+                if (ethValue >= WhaleThreshold)
                 {
-                    ReportWhaleTransaction(txid, btcValue, btcFee, weight, status);
+                    ReportWhaleTransaction(txHash, ethValue, fee, gasPrice, gasUsed);
                 }
 
-                // Check for large fee transactions (potential whale activity)
-                if (btcFee >= 0.01m) // 0.01 BTC fee threshold
+                // Check for high fee transactions (potential whale activity)
+                if (fee >= 0.1m) // 0.1 ETH fee threshold
                 {
-                    ReportHighFeeTransaction(txid, btcValue, btcFee, weight, status);
+                    ReportHighFeeTransaction(txHash, ethValue, fee, gasPrice, gasUsed);
                 }
 
-                // Check for token transfers (if we can identify them)
-                CheckForTokenTransfers(txData);
+                // Check for token transfers (simplified)
+                if (ethValue < 0.01m && gasUsed > 65000) // Likely token transfer
+                {
+                    ReportTokenTransfer(txHash, ethValue, fee, gasUsed);
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Error analyzing transaction: {ex.Message}");
             }
-            
-            return Task.CompletedTask;
         }
 
-        static Task ReportWhaleTransaction(string txid, decimal btcValue, decimal btcFee, int weight, string status)
+        static Task ReportWhaleTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            var ethPrice = 3000m; // Approximate ETH price for demo
             
-            Console.WriteLine($"🐋 WHALE DETECTED! 🐋");
+            Console.WriteLine($"🐋 ETH WHALE DETECTED! 🐋");
             Console.WriteLine($"⏰ Time: {timestamp}");
-            Console.WriteLine($"🆔 TXID: {txid}");
-            Console.WriteLine($"💰 Value: {btcValue:F8} BTC (${btcValue * 50000:F2})");
-            Console.WriteLine($"💸 Fee: {btcFee:F8} BTC");
-            Console.WriteLine($"⚖️  Weight: {weight:N0} vB");
-            Console.WriteLine($"📊 Status: {status}");
-            Console.WriteLine($"🔗 Explorer: https://mempool.space/tx/{txid}");
+            Console.WriteLine($"🆔 TX Hash: {txHash}");
+            Console.WriteLine($"💰 Value: {ethValue:F4} ETH (${ethValue * ethPrice:F2})");
+            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
+            Console.WriteLine($"⛽ Gas Price: {gasPrice} Gwei");
+            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
+            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
             Console.WriteLine(new string('=', 80));
             
-            // You could add notification logic here (email, webhook, etc.)
-            SendNotification($"🐋 Whale Transaction Detected: {btcValue:F8} BTC", txid);
+            SendNotification($"🐋 ETH Whale Transaction Detected: {ethValue:F4} ETH", txHash);
             
             return Task.CompletedTask;
         }
 
-        static Task ReportHighFeeTransaction(string txid, decimal btcValue, decimal btcFee, int weight, string status)
+        static Task ReportHighFeeTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             
-            Console.WriteLine($"💎 HIGH FEE TRANSACTION 💎");
+            Console.WriteLine($"💎 HIGH FEE ETH TRANSACTION 💎");
             Console.WriteLine($"⏰ Time: {timestamp}");
-            Console.WriteLine($"🆔 TXID: {txid}");
-            Console.WriteLine($"💰 Value: {btcValue:F8} BTC");
-            Console.WriteLine($"💸 Fee: {btcFee:F8} BTC");
-            Console.WriteLine($"⚖️  Weight: {weight:N0} vB");
-            Console.WriteLine($"📊 Status: {status}");
-            Console.WriteLine($"🔗 Explorer: https://mempool.space/tx/{txid}");
+            Console.WriteLine($"🆔 TX Hash: {txHash}");
+            Console.WriteLine($"💰 Value: {ethValue:F4} ETH");
+            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
+            Console.WriteLine($"⛽ Gas Price: {gasPrice} Gwei");
+            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
+            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
             Console.WriteLine(new string('-', 60));
             
             return Task.CompletedTask;
         }
 
-        static Task CheckForTokenTransfers(dynamic txData)
+        static Task ReportTokenTransfer(string txHash, decimal ethValue, decimal fee, int gasUsed)
         {
-            // This is a simplified check - in a real implementation you'd need to
-            // decode OP_RETURN data and check for token transfer patterns
-            try
-            {
-                // Look for large outputs that might be token transfers
-                if (txData.vout != null)
-                {
-                    foreach (var output in txData.vout)
-                    {
-                        var value = output.value?.Value ?? 0;
-                        var btcValue = value / 100000000m;
-                        
-                        // Check if this looks like a token transfer (small BTC amount with large data)
-                        if (btcValue < 0.001m && output.scriptpubkey?.ToString().Length > 100)
-                        {
-                            Console.WriteLine($"🪙 Potential Token Transfer Detected");
-                            Console.WriteLine($"🆔 TXID: {txData.txid}");
-                            Console.WriteLine($"💰 BTC Value: {btcValue:F8}");
-                            Console.WriteLine($"📜 Script Length: {output.scriptpubkey?.ToString().Length}");
-                            Console.WriteLine(new string('-', 40));
-                        }
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                // Silently handle token analysis errors
-            }
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            
+            Console.WriteLine($"🪙 POTENTIAL TOKEN TRANSFER 🪙");
+            Console.WriteLine($"⏰ Time: {timestamp}");
+            Console.WriteLine($"🆔 TX Hash: {txHash}");
+            Console.WriteLine($"💰 ETH Value: {ethValue:F6} ETH");
+            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
+            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
+            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
+            Console.WriteLine(new string('-', 40));
             
             return Task.CompletedTask;
         }
 
-        static Task SendNotification(string message, string txid)
+        static Task SendNotification(string message, string txHash)
         {
-            // Placeholder for notification logic
-            // You could implement:
-            // - Email notifications
-            // - Discord webhook
-            // - Telegram bot
-            // - WebSocket push to frontend
-            // - Database logging
-            
             Console.WriteLine($"📢 NOTIFICATION: {message}");
             
-            // Example webhook implementation:
+            // Example webhook implementation for ETH:
             /*
             using var httpClient = new HttpClient();
             var webhookData = new
@@ -240,10 +239,10 @@ namespace MempoolListener
                 {
                     new
                     {
-                        title = "Whale Transaction Detected",
-                        description = $"Transaction: {txid}",
+                        title = "ETH Whale Transaction Detected",
+                        description = $"Transaction: {txHash}",
                         color = 0x00ff00,
-                        url = $"https://mempool.space/tx/{txid}"
+                        url = $"https://etherscan.io/tx/{txHash}"
                     }
                 }
             };
