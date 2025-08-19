@@ -38,10 +38,16 @@ namespace MempoolListener
         private static readonly Dictionary<string, TokenAnalysis> TokenAnalytics = new();
         private static readonly List<CopyTradeSignal> CopyTradeSignals = new();
 
-        // Configuration
+                // Configuration
         private static readonly int MaxWhaleHistory = 1000;
         private static readonly int PatternAnalysisWindow = 24; // hours
-        private static readonly decimal MinSuccessRate = 0.7m; // 70% success rate for copy trading
+        private static readonly decimal MinSuccessRate = 0.5m; // 50% success rate for copy trading
+        
+        // Binance Trading Configuration
+        private static readonly string BinanceApiKey = "YOUR_BINANCE_API_KEY";
+        private static readonly string BinanceSecretKey = "YOUR_BINANCE_SECRET_KEY";
+        private static BinanceTrading? _binanceTrading;
+        private static bool _tradingEnabled = false;
 
         static async Task Main(string[] args)
         {
@@ -66,15 +72,72 @@ namespace MempoolListener
             else
             {
                 Console.WriteLine("✅ Telegram integration configured");
-                await SendTelegramMessage("🐋 Copy Trading Strategy Started!\n🎯 Copy trading signals > $50,000 USD\n📊 Pattern analysis every 5 minutes\n🎯 High confidence summaries every 10 minutes");
+                await SendTelegramMessage("🐋 Copy Trading Strategy Started!\n🎯 Copy trading signals > $50,000 USD\n📊 Pattern analysis every 3 minutes\n🎯 High confidence summaries every 6 minutes");
+                
+                // Send a test message after 30 seconds
+                _ = Task.Run(async () => {
+                    await Task.Delay(30000);
+                    await SendTelegramMessage("🧪 Test Message: Copy trading system is active and monitoring whales!");
+                });
             }
 
+            // Initialize Binance trading
+            await InitializeBinanceTrading();
+            
             // Start background tasks
             _ = Task.Run(WhalePatternAnalysis);
             _ = Task.Run(GenerateCopyTradeSignals);
             _ = Task.Run(SaveWhaleData);
+            if (_tradingEnabled)
+            {
+                _ = Task.Run(() => _binanceTrading!.MonitorActiveTradesAsync());
+                _ = Task.Run(GenerateTradingReport);
+            }
 
             await ConnectToEthereum();
+        }
+
+        static async Task InitializeBinanceTrading()
+        {
+            if (BinanceApiKey == "YOUR_BINANCE_API_KEY" || BinanceSecretKey == "YOUR_BINANCE_SECRET_KEY")
+            {
+                Console.WriteLine("⚠️  BINANCE TRADING NOT CONFIGURED!");
+                Console.WriteLine("To enable automated trading:");
+                Console.WriteLine("1. Create API keys on Binance");
+                Console.WriteLine("2. Update BinanceApiKey and BinanceSecretKey variables");
+                Console.WriteLine("3. Ensure API keys have spot trading permissions\n");
+                _tradingEnabled = false;
+                return;
+            }
+            
+            try
+            {
+                _binanceTrading = new BinanceTrading(BinanceApiKey, BinanceSecretKey);
+                var success = await _binanceTrading.InitializeAsync();
+                
+                if (success)
+                {
+                    _tradingEnabled = true;
+                    Console.WriteLine("✅ Binance trading enabled - Copy trades will be executed automatically");
+                    
+                    // Send Telegram notification
+                    await SendTelegramMessage("🚀 **BINANCE TRADING ENABLED** 🚀\n\n" +
+                                            "💰 Copy trades will be executed automatically\n" +
+                                            "🛡️ Risk management: 2% per trade\n" +
+                                            "📊 Stop Loss: 5% | Take Profit: 15%\n" +
+                                            "⚡ Max trade amount: $100 USDT");
+                }
+                else
+                {
+                    _tradingEnabled = false;
+                    Console.WriteLine("❌ Failed to initialize Binance trading");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error initializing Binance trading: {ex.Message}");
+                _tradingEnabled = false;
+            }
         }
 
         static async Task ConnectToEthereum()
@@ -335,7 +398,7 @@ namespace MempoolListener
                 var whale = WhaleWallets[from];
                 var successRate = CalculateWhaleSuccessRate(from);
                 
-                if (successRate >= MinSuccessRate && whale.TransactionCount >= 5)
+                                 if (successRate >= MinSuccessRate && whale.TransactionCount >= 2)
                 {
                     var signal = new CopyTradeSignal
                     {
@@ -360,7 +423,32 @@ namespace MempoolListener
                         }
                     }
 
-                    await SendCopyTradeAlert(signal);
+                                         Console.WriteLine($"🎯 Sending copy trade alert for whale {from.Substring(0, 8)}...");
+                     await SendCopyTradeAlert(signal);
+                     
+                     // Execute copy trade if Binance trading is enabled
+                     if (_tradingEnabled && _binanceTrading != null)
+                     {
+                         Console.WriteLine($"🚀 Executing copy trade for signal: {signal.TxHash.Substring(0, 10)}...");
+                         var tradeExecuted = await _binanceTrading.ExecuteCopyTradeAsync(signal);
+                         
+                         if (tradeExecuted)
+                         {
+                             await SendTelegramMessage($"✅ **COPY TRADE EXECUTED** ✅\n\n" +
+                                                      $"🐋 Whale: {signal.WhaleAddress.Substring(0, 8)}...\n" +
+                                                      $"💰 Value: ${signal.UsdValue:N0}\n" +
+                                                      $"🎯 Type: {signal.SignalType}\n" +
+                                                      $"📊 Confidence: {signal.Confidence:P0}\n" +
+                                                      $"⏰ Time: {signal.Timestamp:HH:mm:ss}");
+                         }
+                         else
+                         {
+                             await SendTelegramMessage($"⚠️ **COPY TRADE FAILED** ⚠️\n\n" +
+                                                      $"🐋 Whale: {signal.WhaleAddress.Substring(0, 8)}...\n" +
+                                                      $"💰 Value: ${signal.UsdValue:N0}\n" +
+                                                      $"❌ Reason: Insufficient balance or API error");
+                         }
+                     }
                 }
             }
         }
@@ -412,7 +500,7 @@ namespace MempoolListener
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromMinutes(5)); // Run every 5 minutes
+                                         await Task.Delay(TimeSpan.FromMinutes(3)); // Run every 3 minutes
 
                     var topWhales = WhaleWallets.Values
                         .OrderByDescending(w => w.TotalVolume)
@@ -424,23 +512,28 @@ namespace MempoolListener
                         var analysis = "📊 **COPY TRADING PATTERN ANALYSIS** 📊\n\n";
                         analysis += $"🎯 Top Copy Trading Opportunities (Last 24h):\n\n";
 
-                        foreach (var whale in topWhales)
-                        {
-                            var successRate = CalculateWhaleSuccessRate(whale.Address);
-                            if (successRate >= MinSuccessRate && whale.TransactionCount >= 5)
-                            {
-                                analysis += $"🐋 **{whale.Address.Substring(0, 8)}...**\n";
-                                analysis += $"💰 Volume: ${whale.TotalVolume:N0}\n";
-                                analysis += $"📈 Success Rate: {successRate:P0} | Txs: {whale.TransactionCount}\n";
-                                analysis += $"🔄 Buy/Sell: {whale.BuyCount}/{whale.SellCount}\n";
-                                analysis += $"⏰ Last Activity: {whale.LastActivity:HH:mm}\n\n";
-                            }
-                        }
+                                                 foreach (var whale in topWhales)
+                         {
+                             var successRate = CalculateWhaleSuccessRate(whale.Address);
+                             if (successRate >= MinSuccessRate && whale.TransactionCount >= 2)
+                             {
+                                 analysis += $"🐋 **{whale.Address.Substring(0, 8)}...**\n";
+                                 analysis += $"💰 Volume: ${whale.TotalVolume:N0}\n";
+                                 analysis += $"📈 Success Rate: {successRate:P0} | Txs: {whale.TransactionCount}\n";
+                                 analysis += $"🔄 Buy/Sell: {whale.BuyCount}/{whale.SellCount}\n";
+                                 analysis += $"⏰ Last Activity: {whale.LastActivity:HH:mm}\n\n";
+                             }
+                         }
 
-                        if (analysis.Contains("🐋"))
-                        {
-                            await SendTelegramMessage(analysis);
-                        }
+                                                 if (analysis.Contains("🐋"))
+                         {
+                             Console.WriteLine("📱 Sending pattern analysis to Telegram...");
+                             await SendTelegramMessage(analysis);
+                         }
+                         else
+                         {
+                             Console.WriteLine("📊 No qualified whales found for pattern analysis");
+                         }
                     }
                 }
                 catch (Exception ex)
@@ -456,10 +549,10 @@ namespace MempoolListener
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromMinutes(10)); // Run every 10 minutes
+                                         await Task.Delay(TimeSpan.FromMinutes(6)); // Run every 6 minutes
 
                     var highConfidenceSignals = CopyTradeSignals
-                        .Where(s => s.Confidence >= 0.8m && s.Timestamp > DateTime.Now.AddHours(-1))
+                                                 .Where(s => s.Confidence >= 0.6m && s.Timestamp > DateTime.Now.AddHours(-1))
                         .OrderByDescending(s => s.Confidence)
                         .Take(5)
                         .ToList();
@@ -477,12 +570,65 @@ namespace MempoolListener
                             signals += $"⏰ Time: {signal.Timestamp:HH:mm}\n\n";
                         }
 
-                        await SendTelegramMessage(signals);
+                                                 Console.WriteLine("📱 Sending high confidence signals to Telegram...");
+                         await SendTelegramMessage(signals);
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Error generating copy trade signals: {ex.Message}");
+                }
+            }
+        }
+
+        static async Task GenerateTradingReport()
+        {
+            while (true)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(15)); // Generate report every 15 minutes
+                    
+                    if (_tradingEnabled && _binanceTrading != null)
+                    {
+                        var activeTrades = _binanceTrading.GetActiveTrades();
+                        var tradeHistory = _binanceTrading.GetTradeHistory();
+                        var totalPnL = await _binanceTrading.GetTotalPnLAsync();
+                        var accountBalance = await _binanceTrading.GetAccountBalanceAsync();
+                        
+                        var report = "📊 **TRADING PERFORMANCE REPORT** 📊\n\n";
+                        report += $"💰 Account Balance: ${accountBalance:F2} USDT\n";
+                        report += $"📈 Total PnL: ${totalPnL:F2}\n";
+                        report += $"🔄 Active Trades: {activeTrades.Count}\n";
+                        report += $"📋 Total Trades: {tradeHistory.Count}\n\n";
+                        
+                        if (activeTrades.Any())
+                        {
+                            report += "🟢 **ACTIVE TRADES:**\n";
+                            foreach (var trade in activeTrades.Take(3))
+                            {
+                                report += $"• {trade.Symbol}: ${trade.Amount:F2} | Entry: ${trade.EntryPrice:F4}\n";
+                            }
+                            report += "\n";
+                        }
+                        
+                        var recentTrades = tradeHistory.Where(t => t.Status == "CLOSED").TakeLast(5).ToList();
+                        if (recentTrades.Any())
+                        {
+                            report += "📋 **RECENT CLOSED TRADES:**\n";
+                            foreach (var trade in recentTrades)
+                            {
+                                var pnlText = trade.PnL >= 0 ? $"✅ +${trade.PnL:F2}" : $"❌ ${trade.PnL:F2}";
+                                report += $"• {trade.Symbol}: {pnlText} ({trade.PnLPercentage:F1}%)\n";
+                            }
+                        }
+                        
+                        await SendTelegramMessage(report);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Error generating trading report: {ex.Message}");
                 }
             }
         }
