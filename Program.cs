@@ -45,10 +45,9 @@ namespace MempoolListener
 
         static async Task Main(string[] args)
         {
-            Console.WriteLine("🐋 Ethereum Whale Tracker & Copy Trading Strategy Starting...");
-            Console.WriteLine($"Monitoring for transactions > {WhaleThreshold} ETH");
-            Console.WriteLine($"📱 Telegram alerts for transactions > ${DollarWhaleThreshold:N0}");
-            Console.WriteLine($"🎯 Copy trading signals for transactions > ${CopyTradeThreshold:N0}");
+            Console.WriteLine("🐋 Ethereum Copy Trading Strategy Starting...");
+            Console.WriteLine($"📱 Copy trading signals for transactions > ${CopyTradeThreshold:N0}");
+            Console.WriteLine($"📊 Pattern analysis and high confidence summaries");
             Console.WriteLine("Press Ctrl+C to exit\n");
 
             Console.WriteLine("🔑 Using Alchemy API key for real Ethereum data");
@@ -67,7 +66,7 @@ namespace MempoolListener
             else
             {
                 Console.WriteLine("✅ Telegram integration configured");
-                await SendTelegramMessage("🐋 Whale Tracker & Copy Trading Started!\nMonitoring for transactions > $10,000 USD\nCopy trading signals > $50,000 USD");
+                await SendTelegramMessage("🐋 Copy Trading Strategy Started!\n🎯 Copy trading signals > $50,000 USD\n📊 Pattern analysis every 5 minutes\n🎯 High confidence summaries every 10 minutes");
             }
 
             // Start background tasks
@@ -230,13 +229,11 @@ namespace MempoolListener
                         await AnalyzeCopyTradeSignal(txHash, ethValue, fee, (int)gasPriceGwei, gasUsed, usdValue, from, to, input);
                     }
 
-                    // Telegram whale alerts
-                    if (usdValue >= DollarWhaleThreshold)
+                    // Only log significant transactions (whales or high fees)
+                    if (usdValue >= DollarWhaleThreshold || fee >= 0.1m)
                     {
-                        await SendTelegramWhaleAlert(txHash, ethValue, fee, (int)gasPriceGwei, gasUsed, usdValue, from, to);
+                        Console.WriteLine($"🐋 SIGNIFICANT TX: {txHash.Substring(0, 10)}... | Value: {ethValue:F6} ETH (${usdValue:F2}) | Fee: {fee:F6} ETH | Gas: {gasUsed:N0}");
                     }
-
-                    Console.WriteLine($"📊 TX: {txHash.Substring(0, 10)}... | Value: {ethValue:F6} ETH (${usdValue:F2}) | Fee: {fee:F6} ETH | Gas: {gasUsed:N0}");
                 }
             }
             catch (Exception ex)
@@ -424,20 +421,26 @@ namespace MempoolListener
 
                     if (topWhales.Any())
                     {
-                        var analysis = "🐋 **WHALE PATTERN ANALYSIS** 🐋\n\n";
-                        analysis += $"📊 Top 10 Whales (Last 24h):\n\n";
+                        var analysis = "📊 **COPY TRADING PATTERN ANALYSIS** 📊\n\n";
+                        analysis += $"🎯 Top Copy Trading Opportunities (Last 24h):\n\n";
 
                         foreach (var whale in topWhales)
                         {
                             var successRate = CalculateWhaleSuccessRate(whale.Address);
-                            analysis += $"🐳 **{whale.Address.Substring(0, 8)}...**\n";
-                            analysis += $"💰 Volume: ${whale.TotalVolume:N0}\n";
-                            analysis += $"📈 Txs: {whale.TransactionCount} | Success: {successRate:P0}\n";
-                            analysis += $"🔄 Buy/Sell: {whale.BuyCount}/{whale.SellCount}\n";
-                            analysis += $"⏰ Last: {whale.LastActivity:HH:mm}\n\n";
+                            if (successRate >= MinSuccessRate && whale.TransactionCount >= 5)
+                            {
+                                analysis += $"🐋 **{whale.Address.Substring(0, 8)}...**\n";
+                                analysis += $"💰 Volume: ${whale.TotalVolume:N0}\n";
+                                analysis += $"📈 Success Rate: {successRate:P0} | Txs: {whale.TransactionCount}\n";
+                                analysis += $"🔄 Buy/Sell: {whale.BuyCount}/{whale.SellCount}\n";
+                                analysis += $"⏰ Last Activity: {whale.LastActivity:HH:mm}\n\n";
+                            }
                         }
 
-                        await SendTelegramMessage(analysis);
+                        if (analysis.Contains("🐋"))
+                        {
+                            await SendTelegramMessage(analysis);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -529,51 +532,19 @@ namespace MempoolListener
 
         static Task ReportWhaleTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed, decimal usdValue)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            
-            Console.WriteLine($"🐋 ETH WHALE DETECTED! 🐋");
-            Console.WriteLine($"⏰ Time: {timestamp}");
-            Console.WriteLine($"🆔 TX Hash: {txHash}");
-            Console.WriteLine($"💰 Value: {ethValue:F4} ETH (${usdValue:F2})");
-            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
-            Console.WriteLine($"⛽ Gas Price: {gasPrice} Gwei");
-            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
-            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
-            Console.WriteLine(new string('=', 80));
-            
+            // Whale transactions are now only tracked for analysis, not logged to console
             return Task.CompletedTask;
         }
 
         static Task ReportHighFeeTransaction(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            
-            Console.WriteLine($"💎 HIGH FEE ETH TRANSACTION 💎");
-            Console.WriteLine($"⏰ Time: {timestamp}");
-            Console.WriteLine($"🆔 TX Hash: {txHash}");
-            Console.WriteLine($"💰 Value: {ethValue:F4} ETH");
-            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
-            Console.WriteLine($"⛽ Gas Price: {gasPrice} Gwei");
-            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
-            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
-            Console.WriteLine(new string('-', 60));
-            
+            // High fee transactions are now only logged in the significant transaction summary
             return Task.CompletedTask;
         }
 
         static Task ReportTokenTransfer(string txHash, decimal ethValue, decimal fee, int gasUsed)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            
-            Console.WriteLine($"🪙 POTENTIAL TOKEN TRANSFER 🪙");
-            Console.WriteLine($"⏰ Time: {timestamp}");
-            Console.WriteLine($"🆔 TX Hash: {txHash}");
-            Console.WriteLine($"💰 ETH Value: {ethValue:F6} ETH");
-            Console.WriteLine($"💸 Fee: {fee:F6} ETH");
-            Console.WriteLine($"⛽ Gas Used: {gasUsed:N0}");
-            Console.WriteLine($"🔗 Explorer: https://etherscan.io/tx/{txHash}");
-            Console.WriteLine(new string('-', 40));
-            
+            // Token transfers are now only tracked for analysis, not logged to console
             return Task.CompletedTask;
         }
 
@@ -615,25 +586,7 @@ namespace MempoolListener
             }
         }
 
-        static async Task SendTelegramWhaleAlert(string txHash, decimal ethValue, decimal fee, int gasPrice, int gasUsed, decimal usdValue, string from, string to)
-        {
-            var timestamp = DateTime.Now.ToString("HH:mm:ss");
-            var shortHash = txHash.Substring(0, 10) + "...";
-            var shortFrom = from.Length > 10 ? from.Substring(0, 10) + "..." : from;
-            var shortTo = to.Length > 10 ? to.Substring(0, 10) + "..." : to;
 
-            var message = $"🐋 <b>WHALE ALERT!</b> 🐋\n\n" +
-                         $"💰 <b>Value:</b> {ethValue:F4} ETH (${usdValue:N0})\n" +
-                         $"⏰ <b>Time:</b> {timestamp}\n" +
-                         $"🆔 <b>TX:</b> {shortHash}\n" +
-                         $"💸 <b>Fee:</b> {fee:F6} ETH\n" +
-                         $"⛽ <b>Gas:</b> {gasPrice} Gwei ({gasUsed:N0})\n" +
-                         $"📤 <b>From:</b> {shortFrom}\n" +
-                         $"📥 <b>To:</b> {shortTo}\n\n" +
-                         $"🔗 <a href=\"https://etherscan.io/tx/{txHash}\">View on Etherscan</a>";
-
-            await SendTelegramMessage(message);
-        }
     }
 
     // Data Models
